@@ -5,45 +5,46 @@
 # expected CRONTAB:
 #  #Run once all disks of VM #220 (vm-pbs02p)
 #  30 7 16 10 *  /etc/SCRIPTS/zfs-initial-rclone-vm.sh 220 xxxxxx_Enc 1>>/var/tmp/zfsrclone_220.log 2>&1
+#
 
 # parameters
-vmt=$1 ; vm=${vmt:="2012"}
+vm=$1
 rclabel=$2
 
 server="$HOSTNAME"
 pool="zpool"
-volume="vm-2012-disk-0"
 frequency="yearly"
+snaptag="initial_backup-rclone"
 
 # tempdir for rclone
-export TMPDIR=/zpool/TMPDIR
+export TMPDIR=/zpool/TMPDIR/$vm ; mkdir -p $TMPDIR 
 
 # create snapshots
 zfs list -H|awk '{print $1}'|awk -F/ '{print $2}'|grep "vm-${vm}-disk-[0-9]"|while read volume ; do
   # check if snapshot exist
-  newsnap=$(zfs list -t snapshot $pool/$volume -o name -s creation -H | tail -n1)
+  newsnap=$(zfs list -t snapshot $pool/$volume -o name -s creation -H | grep "@$snaptag"| tail -n1)
   if [[ -z $newsnap ]] ; then 
-    snaptag="initial_backup-rclone"
+    echo "INFO: Creating snapshot at $(date): ${pool}/${volume}@${snaptag}"
     zfs snapshot ${pool}/${volume}@${snaptag} 1>>/var/tmp/snapshots.log 2>&1
   fi
 done
 
 # send
 zfs list -H|awk '{print $1}'|awk -F/ '{print $2}'|grep "vm-${vm}-disk-[0-9]"|sort -r|while read volume ; do
-  newsnap=$(zfs list -t snapshot $pool/$volume -o name -s creation -H | tail -n1)
+  newsnap=$(zfs list -t snapshot $pool/$volume -o name -s creation -H | grep "@$snaptag"| tail -n1)
   if [[ ! -z $newsnap ]] ; then
     # create checksum file
     ( time nice zfs send -c -w -v $newsnap | md5sum ) 1>/var/tmp/checksum-zfs-$volume.log 2>&1
     # send data: -c, --compressed ; -w, --raw -v, --verbose
     time nice zfs send -c -w -v $newsnap 2>/var/tmp/zfs-send-$volume.log \
     |  nice rclone --low-level-retries 99999 --retries-sleep 30m --config=/etc/rclone.conf \
-                   --log-file=/var/tmp/rclone-zfs-$volume.log \
+                   --log-file=/var/tmp/rclone-zfs-$volume.log --ignore-existing --immutable \
               rcat $rclabel:$server/$newsnap
   fi
 done
 
 # compare checksums and remove snapshots if the same
-time ( zfs list -t snapshot -o name -s creation -H 2>/dev/null|grep '@initial_backup-rclone'|grep "vm-${vm}-disk"|sort -r|while read newsnap ; do
+time ( zfs list -t snapshot -o name -s creation -H 2>/dev/null| grep "@$snaptag"|grep "vm-${vm}-disk"|sort -r|while read newsnap ; do
     # get volume
     volume=$(echo "$newsnap"|sed 's#[/@]# #g'|awk '{print $2}') ; echo "INFO: processing volume: $volume"
 
@@ -71,5 +72,8 @@ done
 echo "INFO: Snaphots left: "
 zfs list -t snapshot -o name -s creation -H|grep '@initial_backup-rclone'
 echo "......................" )
+
+# cleanup
+rm -rf $TMPDIR
 
 echo "...done..."
