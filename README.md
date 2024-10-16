@@ -1,4 +1,4 @@
-# RcloneZFSBackup
+# RcloneZFSBackup (original https://github.com/ACiDGRiM/RcloneZFSBackup)
 Backup ZFS snapshots to cloud storage using RClone rcat
 
 This requires auto-zfs-snapshot to run at least daily and hourly backups and a working rclone remote, frequent snapshots are recommended. No snapshots are created, only holds placed and released
